@@ -32,9 +32,9 @@ public function send(RequestInterface $request, array $options = []) : ResponseI
 {
     static $__otel_hooks;
     if ($__otel_hooks === null) {
-        $__otel_hooks = \resolveHooks(__CLASS__, 'send') ?? array();
+        $__otel_hooks = \resolveHooks(__CLASS__, __FUNCTION__) ?? array();
     }
-    if (isset($__otel_hooks[0]) && ($__otel_args = $__otel_hooks[0]($this, 'send', \func_get_args(), __CLASS__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
+    if (isset($__otel_hooks[0]) && ($__otel_args = $__otel_hooks[0]($this, __FUNCTION__, \func_get_args(), __CLASS__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
         foreach ($__otel_args as $__otel_key => $__otel_value) {
             match ($__otel_key) {
                 default => \trigger_error(\sprintf('Unexpected argument "%s"', $__otel_key)),
@@ -50,10 +50,9 @@ public function send(RequestInterface $request, array $options = []) : ResponseI
     } catch (\Throwable $__otel_exception) {
         throw $__otel_exception;
     } finally {
-        if (isset($__otel_hooks[1]) && (list($__otel_result) = $__otel_hooks[1]($this, 'send', \func_get_args(), $__otel_return ?? null, $__otel_exception ?? null, __CLASS__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
+        if (isset($__otel_hooks[1]) && (list($__otel_result) = $__otel_hooks[1]($this, __FUNCTION__, \func_get_args(), $__otel_return ?? null, $__otel_exception ?? null, __CLASS__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
             return $__otel_result;
         }
     }
 }
-```
 ```

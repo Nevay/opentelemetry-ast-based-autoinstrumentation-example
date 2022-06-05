@@ -69,7 +69,7 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
 
     public function hook(Node\Stmt\ClassMethod $method): array {
         $target = $method->isStatic() ? new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class') : new Node\Expr\Variable('this');
-        $function = new Node\Scalar\String_($method->name->toString());
+        $function = new Node\Scalar\MagicConst\Function_();
         $params = new Node\Expr\FuncCall(new Node\Name\FullyQualified('func_get_args'));
         $class = new Node\Scalar\MagicConst\Class_();
         $filename = new Node\Scalar\String_($this->filename);
@@ -80,7 +80,7 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
         $resolveHooks = new Node\Stmt\If_(new Node\Expr\BinaryOp\Identical($hooksVariable, new Node\Expr\ConstFetch(new Node\Name('null'))), [
             'stmts' => [
                 new Node\Stmt\Expression(new Node\Expr\Assign($hooksVariable, new Node\Expr\BinaryOp\Coalesce(new Node\Expr\FuncCall(new Node\Name\FullyQualified($this->resolveFunction), [
-                    new Node\Arg(new Node\Scalar\MagicConst\Class_()),
+                    new Node\Arg($class),
                     new Node\Arg($function),
                 ]), new Node\Expr\Array_()))),
             ],
