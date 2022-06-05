@@ -1,11 +1,13 @@
 <?php declare(strict_types=1);
 namespace OpenTelemetry\Instrumentation\PhpParser;
 
+use Closure;
 use Composer\Autoload\ClassLoader;
 use PhpParser\Error;
 use PhpParser\Lexer;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\CloningVisitor;
+use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use PhpParser\PrettyPrinter\Standard;
@@ -20,6 +22,7 @@ final class Autoloader {
     private readonly string $resolveFunction;
     private readonly ClassLoader $classLoader;
     private readonly string $directory;
+    private readonly ?Closure $filter;
 
     private readonly Lexer $lexer;
     private readonly Parser $parser;
@@ -28,10 +31,12 @@ final class Autoloader {
         string $resolveFunction,
         ClassLoader $classLoader,
         string $directory,
+        ?Closure $filter = null,
     ) {
         $this->resolveFunction = $resolveFunction;
         $this->classLoader = $classLoader;
         $this->directory = $directory;
+        $this->filter = $filter;
 
         $this->lexer = new Lexer([
             'usedAttributes' => [
@@ -50,7 +55,10 @@ final class Autoloader {
         if (str_starts_with($class, 'OpenTelemetry\\Instrumentation\\PhpParser\\')) {
             return;
         }
-        if (!$file = realpath($this->classLoader->findFile($class))) {
+        if (!$file = $this->classLoader->findFile($class)) {
+            return;
+        }
+        if (!$file = realpath($file)) {
             return;
         }
 
@@ -66,11 +74,17 @@ final class Autoloader {
 
         $traverser = new NodeTraverser();
         $traverser->addVisitor(new CloningVisitor());
+        $traverser->addVisitor(new NameResolver());
         $stmts = $traverser->traverse($ast);
 
+        $visitor = new InstrumentationNodeVisitor($this->resolveFunction, $file, $this->filter);
         $traverser = new NodeTraverser();
-        $traverser->addVisitor(new InstrumentationNodeVisitor($this->resolveFunction, $file));
+        $traverser->addVisitor($visitor);
         $stmts = $traverser->traverse($stmts);
+
+        if (!$visitor->hooked) {
+            return;
+        }
 
         $code = (new Standard())->printFormatPreserving($stmts, $ast, $tokens);
 

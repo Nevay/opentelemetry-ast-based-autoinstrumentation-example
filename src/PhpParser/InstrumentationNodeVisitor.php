@@ -1,6 +1,7 @@
 <?php declare(strict_types=1);
 namespace OpenTelemetry\Instrumentation\PhpParser;
 
+use Closure;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
@@ -12,155 +13,184 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
 
     private readonly string $resolveFunction;
     private readonly ?string $filename;
+    private readonly ?Closure $filter;
+
+    /** @var list<Node\Stmt\ClassLike> */
+    private array $classes = [];
+    /** @var list<Node\Stmt\ClassMethod|Node\Stmt\Function_> */
+    private array $functions = [];
+
+    public bool $hooked = false;
 
     public function __construct(
         string $resolveFunction,
         ?string $filename = null,
+        ?Closure $filter = null,
     ) {
         $this->resolveFunction = $resolveFunction;
         $this->filename = $filename;
+        $this->filter = $filter;
     }
-
-    /**
-     * @var list<Node\FunctionLike>
-     */
-    private array $functionLike = [];
 
     public function enterNode(Node $node): Node\Stmt|int|null {
         if ($node instanceof Node\Stmt\Interface_) {
             return NodeTraverser::DONT_TRAVERSE_CHILDREN;
         }
+        if ($node instanceof Node\Stmt\ClassLike) {
+            $this->classes[] = $node;
+        }
         if ($node instanceof Node\FunctionLike) {
-            $this->functionLike[] = $node;
+            $shouldHook = match (true) {
+                $node instanceof Node\Stmt\ClassMethod => !$this->filter || ($this->filter)(end($this->classes)->namespacedName->toString(), $node->name->name),
+                $node instanceof Node\Stmt\Function_ => !$this->filter || ($this->filter)(null, $node->namespacedName->toString()),
+                default => false,
+            };
+
+            if ($shouldHook) {
+                $this->hooked = true;
+                $this->functions[] = $node;
+            } else {
+                $this->functions[] = null;
+            }
         }
 
         return null;
     }
 
-    public function leaveNode(Node $node): ?Node\Stmt {
+    public function leaveNode(Node $node): Node\Stmt|array|null {
+        if ($node instanceof Node\Stmt\Interface_) {
+            return null;
+        }
+        if ($node instanceof Node\Stmt\ClassLike) {
+            array_pop($this->classes);
+            return null;
+        }
         if ($node instanceof Node\FunctionLike) {
-            array_pop($this->functionLike);
+            if ($function = array_pop($this->functions)) {
+                $function->stmts = $this->hook($function);
+                return $function;
+            }
         }
-
-        if ($node instanceof Node\Stmt\ClassMethod && !$node->isAbstract()) {
-            $node->stmts = $this->hook($node);
-
-            return $node;
-        }
-
-        if ($node instanceof Node\Stmt\Return_ && $node->expr && end($this->functionLike) instanceof Node\Stmt\ClassMethod) {
-            if (!end($this->functionLike)->returnsByRef()) {
+        if ($node instanceof Node\Stmt\Return_ && $node->expr && ($function = end($this->functions))) {
+            if (!$function->returnsByRef()) {
                 return new Node\Stmt\Return_(new Node\Expr\Assign(new Node\Expr\Variable($this->variable('return')), $node->expr));
             }
 
-            return new Node\Stmt\If_(
-                new Node\Expr\ConstFetch(new Node\Name('true')),
-                [
-                    'stmts' => [
-                        new Node\Stmt\Expression(new Node\Expr\AssignRef(new Node\Expr\Variable($this->variable('return')), $node->expr)),
-                        new Node\Stmt\Return_(new Node\Expr\Variable($this->variable('return'))),
-                    ],
-                ]
-            );
+            return [
+                new Node\Stmt\Expression(new Node\Expr\AssignRef(new Node\Expr\Variable($this->variable('return')), $node->expr)),
+                new Node\Stmt\Return_(new Node\Expr\Variable($this->variable('return'))),
+            ];
         }
 
         return null;
     }
 
-    public function hook(Node\Stmt\ClassMethod $method): array {
-        $target = $method->isStatic() ? new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class') : new Node\Expr\Variable('this');
+    public function hook(Node\FunctionLike $functionLike): array {
+        $null = new Node\Expr\ConstFetch(new Node\Name('null'));
+
+        $target = $functionLike instanceof Node\Stmt\ClassMethod
+            ? $functionLike->isStatic() ? new Node\Expr\ClassConstFetch(new Node\Name('static'), 'class') : new Node\Expr\Variable('this')
+            : $null;
         $function = new Node\Scalar\MagicConst\Function_();
         $params = new Node\Expr\FuncCall(new Node\Name\FullyQualified('func_get_args'));
-        $class = new Node\Scalar\MagicConst\Class_();
+        $class = $functionLike instanceof Node\Stmt\ClassMethod
+            ? new Node\Scalar\MagicConst\Class_()
+            : $null;
         $filename = new Node\Scalar\String_($this->filename);
-        $lineno = new Node\Scalar\LNumber($method->getStartLine());
+        $lineno = new Node\Scalar\LNumber($functionLike->getStartLine());
 
-        $hooksVariable = new Node\Expr\Variable($this->variable('hooks'));
-        $hooks = new Node\Stmt\Static_([new Node\Stmt\StaticVar($hooksVariable)]);
-        $resolveHooks = new Node\Stmt\If_(new Node\Expr\BinaryOp\Identical($hooksVariable, new Node\Expr\ConstFetch(new Node\Name('null'))), [
+        $varArgs = new Node\Expr\Variable($this->variable('args'));
+        $varKey = new Node\Expr\Variable($this->variable('key'));
+        $varValue = new Node\Expr\Variable($this->variable('value'));
+
+        $varResult = new Node\Expr\Variable($this->variable('result'));
+
+        $varReturn = new Node\Expr\Variable($this->variable('return'));
+        $varException = new Node\Expr\Variable($this->variable('exception'));
+
+        $varHooks = new Node\Expr\Variable($this->variable('hooks'));
+        $preHook = new Node\Expr\ArrayDimFetch($varHooks, new Node\Scalar\LNumber(0));
+        $postHook = new Node\Expr\ArrayDimFetch($varHooks, new Node\Scalar\LNumber(1));
+
+        $declareHooks = new Node\Stmt\Static_([new Node\Stmt\StaticVar($varHooks)]);
+        $resolveHooks = new Node\Stmt\If_(new Node\Expr\BinaryOp\Identical($varHooks, $null), [
             'stmts' => [
-                new Node\Stmt\Expression(new Node\Expr\Assign($hooksVariable, new Node\Expr\BinaryOp\Coalesce(new Node\Expr\FuncCall(new Node\Name\FullyQualified($this->resolveFunction), [
+                new Node\Stmt\Expression(new Node\Expr\Assign($varHooks, new Node\Expr\BinaryOp\Coalesce(new Node\Expr\FuncCall(new Node\Name\FullyQualified($this->resolveFunction), [
                     new Node\Arg($class),
                     new Node\Arg($function),
                 ]), new Node\Expr\Array_()))),
             ],
         ]);
 
-        $preHookCall = new Node\Expr\FuncCall(new Node\Expr\ArrayDimFetch($hooksVariable, new Node\Scalar\LNumber(0)), [
+        $preHookCall = new Node\Expr\FuncCall($preHook, [
             new Node\Arg($target),
-            new Node\Arg($function),
             new Node\Arg($params),
             new Node\Arg($class),
+            new Node\Arg($function),
             new Node\Arg($filename),
             new Node\Arg($lineno),
         ]);
-        $postHookCall = new Node\Expr\FuncCall(new Node\Expr\ArrayDimFetch($hooksVariable, new Node\Scalar\LNumber(1)), [
+        $postHookCall = new Node\Expr\FuncCall($postHook, [
             new Node\Arg($target),
-            new Node\Arg($function),
             new Node\Arg($params),
-            new Node\Arg(new Node\Expr\BinaryOp\Coalesce(new Node\Expr\Variable($this->variable('return')), new Node\Expr\ConstFetch(new Node\Name('null')))),
-            new Node\Arg(new Node\Expr\BinaryOp\Coalesce(new Node\Expr\Variable($this->variable('exception')), new Node\Expr\ConstFetch(new Node\Name('null')))),
+            new Node\Arg(new Node\Expr\BinaryOp\Coalesce($varReturn, $null)),
+            new Node\Arg(new Node\Expr\BinaryOp\Coalesce($varException, $null)),
             new Node\Arg($class),
+            new Node\Arg($function),
             new Node\Arg($filename),
             new Node\Arg($lineno),
         ]);
 
-        $preHookCall = new Node\Expr\Assign(new Node\Expr\Variable($this->variable('args')), $preHookCall);
-        if ($method->returnType != 'void') {
-            $postHookCall = new Node\Expr\Assign(new Node\Expr\List_([new Node\Expr\ArrayItem(new Node\Expr\Variable($this->variable('result')))]), $postHookCall);
+        $preHookCall = new Node\Expr\Assign($varArgs, $preHookCall);
+        if ($functionLike->returnType != 'void') {
+            $postHookCall = new Node\Expr\Assign(new Node\Expr\List_([new Node\Expr\ArrayItem($varResult)]), $postHookCall);
         }
 
-        $preHook = new Node\Stmt\If_(new Node\Expr\BinaryOp\BooleanAnd(new Node\Expr\Isset_([new Node\Expr\ArrayDimFetch($hooksVariable, new Node\Scalar\LNumber(0))]), $preHookCall), [
+        $preHook = new Node\Stmt\If_(new Node\Expr\BinaryOp\BooleanAnd(new Node\Expr\Isset_([$preHook]), $preHookCall), [
             'stmts' => [
                 new Node\Stmt\Foreach_(
-                    new Node\Expr\Variable($this->variable('args')),
-                    new Node\Expr\Variable($this->variable('value')),
+                    $varArgs,
+                    $varValue,
                     [
-                        'keyVar' => new Node\Expr\Variable($this->variable('key')),
-                        'stmts' => [new Node\Stmt\Expression($this->generateParameterOverrideExpression($method, $this->variable('key'), $this->variable('value')))],
+                        'keyVar' => $varKey,
+                        'stmts' => [new Node\Stmt\Expression($this->generateParameterOverrideExpression($functionLike, $varKey, $varValue))],
                     ],
                 )
             ],
         ]);
-        $preHookCleanup = new Node\Stmt\Unset_([
-            new Node\Expr\Variable($this->variable('args')),
-            new Node\Expr\Variable($this->variable('key')),
-            new Node\Expr\Variable($this->variable('value')),
-        ]);
+        $preHookCleanup = new Node\Stmt\Unset_([$varArgs, $varKey, $varValue]);
 
         $try = new Node\Stmt\TryCatch(
-            $method->stmts,
+            $functionLike->getStmts(),
             [
                 new Node\Stmt\Catch_(
                     [new Node\Name\FullyQualified('Throwable')],
-                    new Node\Expr\Variable($this->variable('exception')),
-                    [
-                        new Node\Stmt\Throw_(new Node\Expr\Variable($this->variable('exception'))),
-                    ],
+                    $varException,
+                    [new Node\Stmt\Throw_($varException)],
                 ),
             ],
             new Node\Stmt\Finally_([
-                new Node\Stmt\If_(new Node\Expr\BinaryOp\BooleanAnd(new Node\Expr\Isset_([new Node\Expr\ArrayDimFetch($hooksVariable, new Node\Scalar\LNumber(1))]), $postHookCall), [
+                new Node\Stmt\If_(new Node\Expr\BinaryOp\BooleanAnd(new Node\Expr\Isset_([$postHook]), $postHookCall), [
                     'stmts' => [
-                        $method->returnType == 'void'
+                        $functionLike->getReturnType() == 'void'
                             ? new Node\Stmt\Return_()
-                            : new Node\Stmt\Return_(new Node\Expr\Variable($this->variable('result'))),
+                            : new Node\Stmt\Return_($varResult),
                     ],
                 ]),
             ]),
         );
 
-        return [$hooks, $resolveHooks, $preHook, $preHookCleanup, $try];
+        return [$declareHooks, $resolveHooks, $preHook, $preHookCleanup, $try];
     }
 
-    private function generateParameterOverrideExpression(Node\FunctionLike $function, string $key, string $value): Node\Expr {
-        $match = new Node\Expr\Match_(new Node\Expr\Variable($key));
+    private function generateParameterOverrideExpression(Node\FunctionLike $function, Node\Expr\Variable $key, Node\Expr\Variable $value): Node\Expr {
+        $match = new Node\Expr\Match_($key);
         $match->arms[] = new Node\MatchArm(
             [],
             new Node\Expr\FuncCall(new Node\Name\FullyQualified('trigger_error'), [
                 new Node\Arg(new Node\Expr\FuncCall(new Node\Name\FullyQualified('sprintf'), [
                     new Node\Arg(new Node\Scalar\String_('Unexpected argument "%s"')),
-                    new Node\Arg(new Node\Expr\Variable($key)),
+                    new Node\Arg($key),
                 ])),
             ]),
         );
@@ -170,7 +200,7 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
                     new Node\Scalar\LNumber($index),
                     new Node\Scalar\String_($param->var->name),
                 ],
-                new Node\Expr\Assign($param->var, new Node\Expr\Variable($value)),
+                new Node\Expr\Assign($param->var, $value),
             );
         }
 

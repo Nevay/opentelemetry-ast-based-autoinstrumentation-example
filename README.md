@@ -4,12 +4,12 @@
 $classLoader = require __DIR__ . '/vendor/autoload.php';
 spl_autoload_register((new Autoloader('resolveHooks', $classLoader, 'generated'))->load(...), prepend: true);
 
-function resolveHooks(string $class, string $function) {
+function resolveHooks(?string $class, string $function) {
     return [
-        function(object|string|null $target, string $function, array $params, ?string $class, ?string $filename, ?int $lineno) {
+        function(object|string|null $target, array $params, ?string $class, string $function, ?string $filename, ?int $lineno) {
             echo "Entering $class::$function", PHP_EOL;
         },
-        function(object|string|null $target, string $function, array $params, mixed $returnValue, ?Throwable $exception, ?string $class, ?string $filename, ?int $lineno) {
+        function(object|string|null $target, array $params, mixed $returnValue, ?Throwable $exception, ?string $class, string $function, ?string $filename, ?int $lineno) {
             echo "Leaving $class::$function", PHP_EOL;
         },
     ];
@@ -34,7 +34,7 @@ public function send(RequestInterface $request, array $options = []) : ResponseI
     if ($__otel_hooks === null) {
         $__otel_hooks = \resolveHooks(__CLASS__, __FUNCTION__) ?? array();
     }
-    if (isset($__otel_hooks[0]) && ($__otel_args = $__otel_hooks[0]($this, __FUNCTION__, \func_get_args(), __CLASS__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
+    if (isset($__otel_hooks[0]) && ($__otel_args = $__otel_hooks[0]($this, \func_get_args(), __CLASS__, __FUNCTION__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
         foreach ($__otel_args as $__otel_key => $__otel_value) {
             match ($__otel_key) {
                 default => \trigger_error(\sprintf('Unexpected argument "%s"', $__otel_key)),
@@ -50,7 +50,7 @@ public function send(RequestInterface $request, array $options = []) : ResponseI
     } catch (\Throwable $__otel_exception) {
         throw $__otel_exception;
     } finally {
-        if (isset($__otel_hooks[1]) && (list($__otel_result) = $__otel_hooks[1]($this, __FUNCTION__, \func_get_args(), $__otel_return ?? null, $__otel_exception ?? null, __CLASS__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
+        if (isset($__otel_hooks[1]) && (list($__otel_result) = $__otel_hooks[1]($this, \func_get_args(), $__otel_return ?? null, $__otel_exception ?? null, __CLASS__, __FUNCTION__, '/php/vendor/guzzlehttp/guzzle/src/Client.php', 120))) {
             return $__otel_result;
         }
     }
