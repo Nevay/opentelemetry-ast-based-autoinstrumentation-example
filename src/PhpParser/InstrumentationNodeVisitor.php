@@ -12,7 +12,6 @@ use function sprintf;
 final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
 
     private readonly string $resolveFunction;
-    private readonly ?string $filename;
     private readonly ?Closure $filter;
 
     /** @var list<Node\Stmt\ClassLike> */
@@ -24,15 +23,13 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
 
     public function __construct(
         string $resolveFunction,
-        ?string $filename = null,
         ?Closure $filter = null,
     ) {
         $this->resolveFunction = $resolveFunction;
-        $this->filename = $filename;
         $this->filter = $filter;
     }
 
-    public function enterNode(Node $node): Node\Stmt|int|null {
+    public function enterNode(Node $node): int|null {
         if ($node instanceof Node\Stmt\Interface_) {
             return NodeTraverser::DONT_TRAVERSE_CHILDREN;
         }
@@ -96,7 +93,7 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
         $class = $functionLike instanceof Node\Stmt\ClassMethod
             ? new Node\Scalar\MagicConst\Class_()
             : $null;
-        $filename = new Node\Scalar\String_($this->filename);
+        $filename = new Node\Scalar\MagicConst\File();
         $lineno = new Node\Scalar\LNumber($functionLike->getStartLine());
 
         $varArgs = new Node\Expr\Variable($this->variable('args'));
