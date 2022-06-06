@@ -184,12 +184,13 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
         $match = new Node\Expr\Match_($key);
         $match->arms[] = new Node\MatchArm(
             [],
-            new Node\Expr\FuncCall(new Node\Name\FullyQualified('trigger_error'), [
+            new Node\Expr\ErrorSuppress(new Node\Expr\FuncCall(new Node\Name\FullyQualified('trigger_error'), [
                 new Node\Arg(new Node\Expr\FuncCall(new Node\Name\FullyQualified('sprintf'), [
                     new Node\Arg(new Node\Scalar\String_('Unexpected argument "%s"')),
                     new Node\Arg($key),
                 ])),
-            ]),
+                new Node\Expr\ConstFetch(new Node\Name\FullyQualified('E_USER_DEPRECATED')),
+            ])),
         );
         foreach ($function->getParams() as $index => $param) {
             $match->arms[] = new Node\MatchArm(
