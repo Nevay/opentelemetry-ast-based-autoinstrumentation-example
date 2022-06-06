@@ -38,7 +38,7 @@ final class InstrumentationNodeVisitor extends NodeVisitorAbstract {
         }
         if ($node instanceof Node\FunctionLike) {
             $shouldHook = match (true) {
-                $node instanceof Node\Stmt\ClassMethod => !$this->filter || ($this->filter)(end($this->classes)->namespacedName->toString(), $node->name->name),
+                $node instanceof Node\Stmt\ClassMethod => !$node->isAbstract() && (!$this->filter || ($this->filter)(end($this->classes)->namespacedName->toString(), $node->name->name)),
                 $node instanceof Node\Stmt\Function_ => !$this->filter || ($this->filter)(null, $node->namespacedName->toString()),
                 default => false,
             };
