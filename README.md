@@ -2,7 +2,7 @@
 
 ```php
 $classLoader = require __DIR__ . '/vendor/autoload.php';
-spl_autoload_register((new Autoloader($classLoader, 'resolveHooks', resolveHooks(...)))->load(...), prepend: true);
+spl_autoload_register((new Autoloader($classLoader, 'resolveHooks'))->load(...), prepend: true);
 
 function resolveHooks(?string $class, string $function): ?array {
     return [
